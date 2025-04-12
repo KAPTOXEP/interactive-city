@@ -12,7 +12,7 @@
             width: 100%;
             height: 100%;
             overflow: hidden;
-            background: #eef;
+            background: #8f8e3c;
         }
 
         #city-holder {
@@ -23,8 +23,6 @@
 
         #city {
             position: absolute;
-            width: 5000px;
-            height: 5000px;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
@@ -40,8 +38,6 @@
 
         #grid-container {
             position: absolute;
-            width: 1000px;
-            height: 1000px;
             transform-origin: 0 0;
             transform: rotateX(60deg) rotateZ(-45deg) scale(0.7) translate(-50%, -50%);
             perspective: 1000px;
@@ -51,17 +47,33 @@
 
         .building {
             position: absolute;
-            background-size: cover;
-            background-repeat: no-repeat;
             transform: translate(-50%, -100%);
             pointer-events: auto;
             user-select: none;
-
+            pointer-events: none;
         }
 
         .building.dragging {
             opacity: 0.8;
             cursor: grabbing;
+        }
+
+        .building-base {
+            position: absolute;
+            transform: rotateX(60deg) rotateZ(-45deg) scale(0.7) translate(-50%, 50%);
+            perspective: 1000px;
+            pointer-events: all;
+            left: 0;
+            top: 0;
+            background-color: #0000001f;
+        }
+
+        .building-image {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-size: cover;
+            background-repeat: no-repeat;
         }
 
 
@@ -71,8 +83,8 @@
             width: 5000px;
             height: 5000px;
             background-image:
-                linear-gradient(rgba(0, 0, 0, 0.3) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0, 0, 0, 0.3) 1px, transparent 1px);
+                linear-gradient(rgba(0, 0, 0, 0.3) 2px, transparent 2px),
+                linear-gradient(90deg, rgba(0, 0, 0, 0.3) 2px, transparent 2px);
             background-size: 100px 100px;
             transform: translate(-50%, -50%);
         }
@@ -90,32 +102,45 @@
         </div>
     </div>
     <script>
+        const gridSize = 50;
         const cityHolder = document.getElementById("city-holder");
         const cityContainer = document.getElementById("city");
         const cityBuildings = document.getElementById("city-buildings");
+        const gridContainer = document.getElementById("grid-container");
+
+        cityContainer.style.width = `${gridSize * 100}px`;
+        cityContainer.style.height = `${gridSize * 100}px`;
+        gridContainer.style.width = `${gridSize * 100}px`;
+        gridContainer.style.height = `${gridSize * 100}px`;
+
         const tileWidth = 99;
         const tileHeight = 49.5;
         const maxScale = 1;
-        const minScale = 0.1;
+        const minScale = 0.2;
         const scaleStep = 0.1;
+
         let isDragging = false;
         let isPanning = false;
-        let scale = 1;
+        let scale = 0.5;
         let worldX = 0;
         let worldY = 0;
+        let startPan = null;
+
         const cityRect = cityContainer.getBoundingClientRect();
+
         const buildings = [
-            // { id: 5, x: 3, y: 2, w: 1, h: 1, image: 'img/obj_cit_001_06.png' },
-            // { id: 6, x: 2, y: 4, w: 1, h: 1, image: 'img/obj_cit_004_06.png' },
-            // { id: 7, x: 5, y: 1, w: 2, h: 2, image: 'img/obj_cit_007_07.png' },
-
-
-            { id: 1, x: 0, y: 0, w: 2, h: 2, image: 'img/obj_cit_004_06.png' },
-            { id: 2, x: -5, y: -5, w: 1, h: 1, image: 'img/obj_cit_004_06.png' },
-            { id: 3, x: 5, y: 5, w: 1, h: 1, image: 'img/obj_cit_004_06.png' },
-            { id: 4, x: 8, y: -2, w: 5, h: 5, image: 'img/obj_cit_004_06.png' },
-
+            { id: 1, x: 0, y: 0, w: 4, h: 4, image: 'img/obj_cit_004_06.png' },
+            { id: 2, x: -5, y: -5, w: 2, h: 2, image: 'img/obj_cit_004_06.png' },
+            { id: 3, x: 5, y: 5, w: 2, h: 2, image: 'img/obj_cit_004_06.png' },
+            { id: 4, x: 8, y: -2, w: 10, h: 10, image: 'img/obj_cit_004_06.png' },
         ];
+
+        function getPointerPosition(e) {
+            if (e.touches && e.touches.length > 0) {
+                return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            }
+            return { x: e.clientX, y: e.clientY };
+        }
 
         function gridToScreen(x, y) {
             return {
@@ -135,74 +160,76 @@
             };
         }
 
-        function renderBuildings() {
-            cityBuildings.innerHTML = "";
-            buildings
-                .forEach(b => {
-                    const { left, top } = gridToScreen(b.x, b.y);
-                    const { left: centerLeft, top: centerTop } = gridToScreen(b.x + (b.w - 1) / 2, b.y + (b.h - 1) / 2);
-                    const div = document.createElement("div");
-                    div.className = "building";
-                    div.style.backgroundImage = `url(${b.image})`;
-                    div.style.width = `${tileWidth * b.w}px`;
-                    div.style.height = `${tileWidth * b.h}px`;
-                    div.style.transform = `translate(${left}px, ${top + tileHeight * (b.h - 1)}px) translate(-50%, -100%)`;
-                    div.style.zIndex = Math.round(100000 + centerTop);
-                    div.dataset.id = b.id;
-                    addDragListeners(div);
-                    cityBuildings.appendChild(div);
-                });
-        }
-
-        function updateTransform() {
-            cityContainer.style.transform = `translate(${-50 + worldX * 100}%, ${-50 + worldY * 100}%) scale(${scale}, ${scale})`
-        }
-
         function isOccupied(x, y, w, h, excludeId = null) {
             return buildings.some(b => {
                 if (b.id === excludeId) return false;
-                return !(
-                    x + w <= b.x ||
-                    x >= b.x + b.w ||
-                    y + h <= b.y ||
-                    y >= b.y + b.h
-                );
+                return !(x + w <= b.x || x >= b.x + b.w || y + h <= b.y || y >= b.y + b.h);
             });
         }
 
-        function addDragListeners(el) {
-            let startX, startY;
-            let offsetX, offsetY;
-            let building = buildings.find(b => b.id == el.dataset.id);
+        function isOutOfBounds(x, y, w, h) {
+            const min = -Math.round(gridSize / 2);
+            const max = Math.round(gridSize / 2) + 1;
+            return x <= min || y <= min || x + w > max || y + h > max;
+        }
 
-            el.addEventListener("pointerdown", e => {
-                isDragging = true;
-                startX = e.clientX;
-                startY = e.clientY;
-                const { left, top } = gridToScreen(building.x, building.y);
-                offsetX = left;
-                offsetY = top;
-                el.classList.add("dragging");
-                el.style.zIndex = "9999999";
-                el.setPointerCapture(e.pointerId);
+        function renderBuildings() {
+            cityBuildings.innerHTML = "";
+            buildings.forEach(b => {
+                const { left, top } = gridToScreen(b.x, b.y);
+                const { top: centerTop } = gridToScreen(b.x + (b.w - 1) / 2, b.y + (b.h - 1) / 2);
+
+                const buildingElement = document.createElement("div");
+                buildingElement.className = "building";
+
+                buildingElement.style.width = `${tileWidth * b.w}px`;
+                buildingElement.style.height = `${tileWidth * b.h}px`;
+                buildingElement.style.transform = `translate(${left}px, ${top + tileHeight * (b.h - 1)}px) translate(-50%, -100%)`;
+                buildingElement.style.zIndex = Math.round(100000 + centerTop);
+                buildingElement.dataset.id = b.id;
+
+                const imageElement = document.createElement("div");
+                imageElement.className = "building-image";
+                imageElement.style.backgroundImage = `url(${b.image})`;
+
+                const baseElement = document.createElement("div");
+                baseElement.className = "building-base";
+                baseElement.style.width = `${tileWidth * b.w}px`;
+                baseElement.style.height = `${tileWidth * b.h}px`;
+
+                addDragListeners(buildingElement, baseElement);
+
+                buildingElement.appendChild(baseElement);
+                buildingElement.appendChild(imageElement);
+                cityBuildings.appendChild(buildingElement);
             });
+        }
 
-            el.addEventListener("pointermove", e => {
+        function updateTransform() {
+            cityContainer.style.transform = `translate(${-50 + worldX * 100}%, ${-50 + worldY * 100}%) scale(${scale})`;
+        }
+
+        function addDragListeners(el, baseEl) {
+            let start, offset, building = buildings.find(b => b.id == el.dataset.id);
+
+            const onMove = (e) => {
                 if (!isDragging) return;
-                const dx = (e.clientX - startX) / scale;
-                const dy = (e.clientY - startY) / scale;
-                el.style.transform = `translate(${offsetX + dx}px, ${offsetY + dy + tileHeight * (building.h - 1)}px) translate(-50%, -100%)`;
-            });
+                const pos = getPointerPosition(e);
+                const dx = (pos.x - start.x) / scale;
+                const dy = (pos.y - start.y) / scale;
+                el.style.transform = `translate(${offset.x + dx}px, ${offset.y + dy + tileHeight * (building.h - 1)}px) translate(-50%, -100%)`;
+            };
 
-            el.addEventListener("pointerup", e => {
+            const onUp = (e) => {
                 if (!isDragging) return;
                 isDragging = false;
-                const finalX = offsetX + (e.clientX - startX) / scale;
-                const finalY = offsetY + (e.clientY - startY) / scale;
+
+                const pos = getPointerPosition(e);
+                const finalX = offset.x + (pos.x - start.x) / scale;
+                const finalY = offset.y + (pos.y - start.y) / scale;
+
                 const { x, y } = screenToGrid(finalX, finalY);
-
-                const collision = isOccupied(x, y, building.w, building.h, building.id);
-
+                const collision = isOccupied(x, y, building.w, building.h, building.id) || isOutOfBounds(x, y, building.w, building.h);
                 if (!collision) {
                     building.x = x;
                     building.y = y;
@@ -210,48 +237,89 @@
 
                 el.classList.remove("dragging");
                 renderBuildings();
-            });
+                removeMoveUpListeners();
+            };
+
+            const addMoveUpListeners = () => {
+                window.addEventListener("pointermove", onMove);
+                window.addEventListener("pointerup", onUp);
+                window.addEventListener("touchmove", onMove, { passive: false });
+                window.addEventListener("touchend", onUp);
+            };
+
+            const removeMoveUpListeners = () => {
+                window.removeEventListener("pointermove", onMove);
+                window.removeEventListener("pointerup", onUp);
+                window.removeEventListener("touchmove", onMove);
+                window.removeEventListener("touchend", onUp);
+            };
+
+            const onDown = (e) => {
+                e.preventDefault();
+                isDragging = true;
+                const pos = getPointerPosition(e);
+                start = { x: pos.x, y: pos.y };
+                const { left, top } = gridToScreen(building.x, building.y);
+                offset = { x: left, y: top };
+                el.classList.add("dragging");
+                el.style.zIndex = "9999999";
+                addMoveUpListeners();
+            };
+
+            baseEl.addEventListener("pointerdown", onDown);
+            baseEl.addEventListener("touchstart", onDown, { passive: false });
         }
 
-        cityHolder.addEventListener("wheel", (e) => {
-            e.preventDefault();
-            const rect = e.target.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
-            const delta = e.deltaY > 0 ? -1 : 1;
-            scale = Math.min(maxScale, Math.max(minScale, scale + delta * scaleStep));
-            updateTransform();
-        });
-        cityHolder.addEventListener("pointerdown", (e) => {
-            if (isDragging) return;
-            isPanning = true;
-            const rect = cityContainer.getBoundingClientRect();
-            startPan = { x: e.clientX - worldX * cityRect.width, y: e.clientY - worldY * cityRect.height, worldX: worldX, worldY: e.clientY };
-            console.log('startPan', startPan,)
-            cityHolder.classList.add("grabbing");
-        });
+        function setupPan() {
+            cityHolder.addEventListener("wheel", (e) => {
+                e.preventDefault();
+                const delta = e.deltaY > 0 ? -1 : 1;
+                scale = Math.min(maxScale, Math.max(minScale, scale + delta * scaleStep));
+                updateTransform();
+            });
 
-        cityHolder.addEventListener("pointermove", (e) => {
-            if (!isPanning) return;
-            const rect = cityContainer.getBoundingClientRect();
-            worldX = (e.clientX - startPan.x) / cityRect.width;
-            worldY = (e.clientY - startPan.y) / cityRect.height;
-            updateTransform();
-        });
+            const onPanMove = (e) => {
+                if (!isPanning) return;
+                const pos = getPointerPosition(e);
+                worldX = (pos.x - startPan.x) / cityRect.width;
+                worldY = (pos.y - startPan.y) / cityRect.height;
+                updateTransform();
+            };
 
-        cityHolder.addEventListener("pointerup", () => {
-            isPanning = false;
-            cityHolder.classList.remove("grabbing");
-        });
+            const onPanEnd = () => {
+                isPanning = false;
+                cityHolder.classList.remove("grabbing");
+                window.removeEventListener("pointermove", onPanMove);
+                window.removeEventListener("pointerup", onPanEnd);
+                window.removeEventListener("touchmove", onPanMove);
+                window.removeEventListener("touchend", onPanEnd);
+            };
 
-        cityHolder.addEventListener("pointerleave", () => {
-            isPanning = false;
-            cityHolder.classList.remove("grabbing");
-        });
+            const onPanStart = (e) => {
+                if (isDragging) return;
+                const pos = getPointerPosition(e);
+                isPanning = true;
+                startPan = {
+                    x: pos.x - worldX * cityRect.width,
+                    y: pos.y - worldY * cityRect.height
+                };
+                cityHolder.classList.add("grabbing");
+
+                window.addEventListener("pointermove", onPanMove);
+                window.addEventListener("pointerup", onPanEnd);
+                window.addEventListener("touchmove", onPanMove, { passive: false });
+                window.addEventListener("touchend", onPanEnd);
+            };
+
+            cityHolder.addEventListener("pointerdown", onPanStart);
+            cityHolder.addEventListener("touchstart", onPanStart, { passive: false });
+        }
 
         renderBuildings();
         updateTransform();
+        setupPan();
     </script>
+
 
 </body>
 

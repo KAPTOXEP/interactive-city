@@ -13,13 +13,18 @@
             width: 100%;
             height: 100%;
             overflow: hidden;
-            background: #8f8e3c;
+        }
+
+        html {
+            --city-background-color: 'transparent';
+            --building-base-background-color: 'transparent';
         }
 
         #city-holder {
             position: absolute;
             width: 100%;
             height: 100%;
+            background-color: var(--city-background-color);
         }
 
         #city {
@@ -29,7 +34,9 @@
             transform: translate(-50%, -50%);
         }
 
-        #city-buildings {
+        #layer-buildings,
+        #layer-ground,
+        #layer-road {
             position: absolute;
             width: 100%;
             height: 100%;
@@ -112,7 +119,7 @@
             pointer-events: all;
             left: 0;
             top: 0;
-            /* background-color: hsla(0, 0%, 0%, 0.1); */
+            background-color: var(--building-base-background-color);
         }
 
         .building-image {
@@ -182,14 +189,34 @@
         #layers-tools.active {
             background-image: url(img/layers-active.svg);
         }
+
+        .context-menu {
+            position: absolute;
+            background: white;
+            border: 1px solid #ccc;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+            z-index: 1000000;
+            padding: 5px 0;
+            display: none;
+        }
+
+        .context-menu-item {
+            padding: 8px 15px;
+            cursor: pointer;
+        }
+
+        .context-menu-item:hover {
+            background: #f0f0f0;
+        }
     </style>
 </head>
 
 <body>
     <div id="city-holder">
-
         <div id="city">
-            <div id="city-buildings"></div>
+            <div id="layer-ground"></div>
+            <div id="layer-road"></div>
+            <div id="layer-buildings"></div>
             <div id="grid-container">
                 <div id="grid" style="left: 50%; top: 50%;"></div>
             </div>
@@ -202,6 +229,10 @@
             <div id="close-tools" class="tool-btn"></div>
         </div>
     </div>
+    <div id="context-menu" class="context-menu">
+        <div class="context-menu-item">Удалить</div>
+        <div class="context-menu-item">Свойства</div>
+    </div>
     <script>
         const Layer = {
             GROUND: 'ground',
@@ -211,15 +242,16 @@
         const gridSize = 100;
         const cityHolder = document.getElementById("city-holder");
         const cityContainer = document.getElementById("city");
-        const cityBuildings = document.getElementById("city-buildings");
+        const layerGround = document.getElementById("layer-ground");
+        const layerRoad = document.getElementById("layer-road");
+        const layerBuildings = document.getElementById("layer-buildings");
         const tools = document.getElementById("tools");
         const closeTools = document.getElementById("close-tools");
         const editBuildingTools = document.getElementById("edit-building-tools");
         const moveCamTools = document.getElementById("move-cam-tools");
-        const addBuildingTools = document.getElementById("add-building-tools");
         const gridTools = document.getElementById("grid-tools");
         const layersTools = document.getElementById("layers-tools");
-
+        const contextMenu = document.getElementById("context-menu");
 
         cityContainer.style.width = `${gridSize * 100}px`;
         cityContainer.style.height = `${gridSize * 100}px`;
@@ -229,34 +261,65 @@
         const maxScale = 1;
         const minScale = 0.2;
         const scaleStep = 0.1;
+        const longPressDuration = 500;
+        const maxMoveDistance = 10; // Максимальное расстояние перемещения для долгого тапа (в пикселях)
         let showGrid = false;
         let canCamChange = false;
         let canAddBuilding = false;
         let canBuildingChange = false;
         const layers = [Layer.GROUND, Layer.ROAD, Layer.BUILDINGS];
 
+        let activeId = false;
         let isDragging = false;
         let isPanning = false;
-        let scale = 0.5;
+        let scale = 1;
         let worldX = 0;
         let worldY = 0;
+        let backgroundColor = 'green';
         let startPan = null;
+        let longPressTimer = null;
+        let touchStartPos = null;
+        let isLongPress = false;
 
         const cityRect = cityContainer.getBoundingClientRect();
 
-        let buildings = [];
+        let items = [];
+        let storage = {
+            items: [
+                { id: 1, item_id: 'obj_cit_004', level: 7, x: 0, y: 0, w: 4, h: 4, layer: Layer.BUILDINGS },
+                { id: 2, item_id: 'obj_cit_004', level: 15, x: -5, y: -5, w: 2, h: 2, layer: Layer.BUILDINGS },
+                { id: 3, item_id: 'obj_cit_004', level: 20, x: 5, y: 5, w: 2, h: 2, layer: Layer.BUILDINGS },
+                { id: 4, item_id: 'obj_cit_004', level: 20, x: 8, y: -2, w: 10, h: 10, layer: Layer.BUILDINGS },
+            ],
+            world: { worldX: 0, worldY: 0, worldScale: 0.5, backgroundColor: '#8f8e3c' }
+        };
+        let gameObjects = {};
 
         function initCity() {
-            buildings = [
-                { id: 1, x: 0, y: 0, w: 4, h: 4, image: 'img/obj_cit_004_06.png' },
-                { id: 2, x: -5, y: -5, w: 2, h: 2, image: 'img/obj_cit_004_06.png' },
-                { id: 3, x: 5, y: 5, w: 2, h: 2, image: 'img/obj_cit_004_07.png' },
-                { id: 4, x: 8, y: -2, w: 10, h: 10, image: 'img/obj_cit_004_07.png' },
-            ];
-            renderBuildings();
+            const { world } = storage || {};
+            if (world) {
+                worldX = world.worldX ?? worldX;
+                worldY = world.worldY ?? worldY;
+                scale = world.worldScale ?? scale;
+                backgroundColor = world.backgroundColor ?? backgroundColor;
+            }
+            if (storage.items && Array.isArray(storage.items)) {
+                items = storage.items.map(item => {
+                    const { id, item_id, level, x, y, w, h, layer } = item;
+                    const image = 'img/obj_cit_007_07.png';
+                    return { id, item_id, level, image, x, y, w, h, layer }
+                }).filter(Boolean);
+            }
+            updateBackground();
+            renderItems();
+            updateGrid();
+            updateTransform();
+            setupPan();
         }
 
-
+        function updateBackground() {
+            document.documentElement.style.setProperty('--city-background-color', backgroundColor);
+        }
 
         function getPointerPosition(e) {
             if (e.touches && e.touches.length > 0) {
@@ -283,10 +346,10 @@
             };
         }
 
-        function isOccupied(x, y, w, h, excludeId = null) {
-            return buildings.some(b => {
+        function isOccupied(x, y, w, h, layer, excludeId = null) {
+            return items.some(b => {
                 if (b.id === excludeId) return false;
-                return !(x + w <= b.x || x >= b.x + b.w || y + h <= b.y || y >= b.y + b.h);
+                return !(x + w <= b.x || x >= b.x + b.w || y + h <= b.y || y >= b.y + b.h) && b.layer === layer;
             });
         }
 
@@ -296,9 +359,24 @@
             return x <= min || y <= min || x + w > max || y + h > max;
         }
 
-        function renderBuildings() {
-            cityBuildings.innerHTML = "";
-            buildings.forEach(b => {
+        function getLayerByType(layerType) {
+            if (layerType === Layer.BUILDINGS) {
+                return layerBuildings;
+            } else if (layerType === Layer.ROAD) {
+                return layerRoad;
+            } else if (layerType === Layer.GROUND) {
+                return layerGround;
+            }
+            return null;
+        }
+
+        function renderItems() {
+            layerGround.innerHTML = "";
+            layerRoad.innerHTML = "";
+            layerBuildings.innerHTML = "";
+
+            items.forEach(b => {
+                const layerElement = getLayerByType(b.layer);
                 const { left, top } = gridToScreen(b.x, b.y);
                 const { top: centerTop } = gridToScreen(b.x + (b.w - 1) / 2, b.y + (b.h - 1) / 2);
 
@@ -324,7 +402,7 @@
 
                 buildingElement.appendChild(baseElement);
                 buildingElement.appendChild(imageElement);
-                cityBuildings.appendChild(buildingElement);
+                layerElement.appendChild(buildingElement);
             });
         }
 
@@ -334,6 +412,7 @@
             gridContainer.style.width = `${gridSize * 100}px`;
             gridContainer.style.height = `${gridSize * 100}px`;
             gridContainer.style.display = showGrid ? 'block' : 'none';
+            document.documentElement.style.setProperty('--building-base-background-color', showGrid ? 'rgba(0, 0, 0, 0.2)' : 'transparent');
 
             gridElement.style.width = `${gridSize * 100}px`;
             gridElement.style.height = `${gridSize * 100}px`;
@@ -343,18 +422,56 @@
             cityContainer.style.transform = `translate(${-50 + worldX * 100}%, ${-50 + worldY * 100}%) scale(${scale})`;
         }
 
+        function showContextMenu(x, y, buildingId) {
+            contextMenu.style.display = 'block';
+            contextMenu.style.left = `${x}px`;
+            contextMenu.style.top = `${y}px`;
+            contextMenu.dataset.buildingId = buildingId;
+
+            const closeMenu = (e) => {
+                if (!contextMenu.contains(e.target)) {
+                    contextMenu.style.display = 'none';
+                    document.removeEventListener('click', closeMenu);
+                    document.removeEventListener('touchstart', closeMenu);
+                }
+            };
+
+            document.addEventListener('click', closeMenu);
+            document.addEventListener('touchstart', closeMenu);
+        }
+
         function addDragListeners(el, baseEl) {
-            let start, offset, building = buildings.find(b => b.id == el.dataset.id);
+            let start, offset, item = items.find(b => b.id == el.dataset.id);
+            let moved = false;
+            let longPressTriggered = false;
 
             const onMove = (e) => {
-                if (!isDragging) return;
+                if (!isDragging && !longPressTimer) return;
+
                 const pos = getPointerPosition(e);
-                const dx = (pos.x - start.x) / scale;
-                const dy = (pos.y - start.y) / scale;
-                el.style.transform = `translate(${offset.x + dx}px, ${offset.y + dy + tileHeight * (building.h - 1)}px) translate(-50%, -100%)`;
+
+                if (longPressTimer && !longPressTriggered) {
+                    const dx = pos.x - touchStartPos.x;
+                    const dy = pos.y - touchStartPos.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance > maxMoveDistance) {
+                        cancelLongPress();
+                        return;
+                    }
+                }
+
+                if (isDragging) {
+                    const dx = (pos.x - start.x) / scale;
+                    const dy = (pos.y - start.y) / scale;
+                    el.style.transform = `translate(${offset.x + dx}px, ${offset.y + dy + tileHeight * (item.h - 1)}px) translate(-50%, -100%)`;
+                    moved = true;
+                }
             };
 
             const onUp = (e) => {
+                cancelLongPress();
+
                 if (!isDragging) return;
                 isDragging = false;
 
@@ -363,14 +480,14 @@
                 const finalY = offset.y + (pos.y - start.y) / scale;
 
                 const { x, y } = screenToGrid(finalX, finalY);
-                const collision = isOccupied(x, y, building.w, building.h, building.id) || isOutOfBounds(x, y, building.w, building.h);
+                const collision = isOccupied(x, y, item.w, item.h, item.layer, item.id) || isOutOfBounds(x, y, item.w, item.h);
                 if (!collision) {
-                    building.x = x;
-                    building.y = y;
+                    item.x = x;
+                    item.y = y;
                 }
 
                 el.classList.remove("dragging");
-                renderBuildings();
+                renderItems();
                 removeMoveUpListeners();
             };
 
@@ -388,15 +505,43 @@
                 window.removeEventListener("touchend", onUp);
             };
 
+            const startLongPress = (e) => {
+                if (!canBuildingChange) return;
+
+                touchStartPos = getPointerPosition(e);
+                moved = false;
+                longPressTriggered = false;
+
+                longPressTimer = setTimeout(() => {
+                    longPressTriggered = true;
+                    const pos = getPointerPosition(e);
+                    showContextMenu(pos.x, pos.y, item.id);
+                    cancelLongPress();
+                }, longPressDuration);
+            };
+
+            const cancelLongPress = () => {
+                if (longPressTimer) {
+                    clearTimeout(longPressTimer);
+                    longPressTimer = null;
+                }
+                longPressTriggered = false;
+            };
+
             const onDown = (e) => {
-                if (!canBuildingChange) {
+                if (e.button === 2 || !canBuildingChange) {
                     return;
                 }
                 e.preventDefault();
+
+                if (e.type === 'touchstart') {
+                    startLongPress(e);
+                }
+
                 isDragging = true;
                 const pos = getPointerPosition(e);
                 start = { x: pos.x, y: pos.y };
-                const { left, top } = gridToScreen(building.x, building.y);
+                const { left, top } = gridToScreen(item.x, item.y);
                 offset = { x: left, y: top };
                 el.classList.add("dragging");
                 el.style.zIndex = "9999999";
@@ -405,6 +550,14 @@
 
             baseEl.addEventListener("pointerdown", onDown);
             baseEl.addEventListener("touchstart", onDown, { passive: false });
+            baseEl.addEventListener("contextmenu", (e) => {
+                if (!canBuildingChange) {
+                    return;
+                }
+                e.preventDefault();
+                const pos = getPointerPosition(e);
+                showContextMenu(pos.x, pos.y, item.id);
+            });
         }
 
         function setupPan() {
@@ -478,12 +631,6 @@
             moveCamTools.classList.toggle('active');
             canCamChange = !enabled;
         });
-        addBuildingTools.addEventListener("click", (e) => {
-            e.stopPropagation();
-            const enabled = addBuildingTools.classList.contains('active')
-            addBuildingTools.classList.toggle('active');
-            canAddBuilding = !enabled;
-        });
         gridTools.addEventListener("click", (e) => {
             e.stopPropagation();
             const enabled = gridTools.classList.contains('active')
@@ -497,14 +644,22 @@
             layersTools.classList.toggle('active');
         });
 
-        renderBuildings();
-        updateGrid();
-        updateTransform();
-        setupPan();
+        contextMenu.querySelectorAll('.context-menu-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                const buildingId = parseInt(contextMenu.dataset.buildingId);
+                const building = items.find(b => b.id === buildingId);
+
+                if (e.target.textContent === 'Удалить' && building) {
+                    items = items.filter(b => b.id !== buildingId);
+                    renderItems();
+                }
+                contextMenu.style.display = 'none';
+            });
+        });
+
+
         initCity();
     </script>
-
-
 </body>
 
 </html>

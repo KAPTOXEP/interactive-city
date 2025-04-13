@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Изометрический город</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
         html,
         body {
@@ -43,6 +44,52 @@
             perspective: 1000px;
             top: 50%;
             left: 50%;
+            display: none;
+        }
+
+        .menu {
+            position: absolute;
+            width: 100px;
+            height: 100px;
+            background-color: hsla(0, 0%, 0%, 0.1);
+            border-top-right-radius: 20px;
+            border-bottom-right-radius: 20px;
+            transition: 0.2s height ease-in-out;
+            top: 50%;
+            left: 0;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 5px;
+            overflow: hidden;
+            background-repeat: no-repeat;
+            background-position: 50% 50%;
+            background-image: url(img/edit.svg);
+            background-size: 80px;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        .menu.expanded {
+            height: 500px;
+            background-color: hsla(0, 0%, 0%, 0.3);
+            background-image: none;
+        }
+
+        .tool-btn {
+            display: none;
+            height: 80px;
+            width: 100%;
+            flex-shrink: 0;
+            background-repeat: no-repeat;
+            background-size: contain;
+            background-position: 50% 50%;
+        }
+
+        #tools.expanded .tool-btn {
+            display: flex;
         }
 
         .building {
@@ -65,7 +112,7 @@
             pointer-events: all;
             left: 0;
             top: 0;
-            background-color: #0000001f;
+            /* background-color: hsla(0, 0%, 0%, 0.1); */
         }
 
         .building-image {
@@ -76,17 +123,64 @@
             background-repeat: no-repeat;
         }
 
-
-
-        .grid {
+        #grid {
             position: absolute;
-            width: 5000px;
-            height: 5000px;
             background-image:
                 linear-gradient(rgba(0, 0, 0, 0.3) 2px, transparent 2px),
                 linear-gradient(90deg, rgba(0, 0, 0, 0.3) 2px, transparent 2px);
             background-size: 100px 100px;
             transform: translate(-50%, -50%);
+        }
+
+        #close-tools {
+            background-image: url(img/close.svg);
+            position: absolute;
+            top: auto;
+            bottom: 10px;
+        }
+
+        #edit-building-tools {
+            background-image: url(img/building-edit.svg);
+            background-size: 80%;
+        }
+
+        #edit-building-tools.active {
+            background-image: url(img/building-edit-active.svg);
+        }
+
+        #move-cam-tools {
+            background-image: url(img/camera.svg);
+        }
+
+        #move-cam-tools.active {
+            background-image: url(img/camera-active.svg);
+        }
+
+        #add-building-tools {
+            background-image: url(img/plus.svg);
+            background-size: 60%;
+        }
+
+        #add-building-tools.active {
+            background-image: url(img/plus-active.svg);
+        }
+
+        #grid-tools {
+            background-image: url(img/grid.svg);
+            background-size: 80%;
+        }
+
+        #grid-tools.active {
+            background-image: url(img/grid-active.svg);
+        }
+
+        #layers-tools {
+            background-image: url(img/layers.svg);
+            background-size: 80%;
+        }
+
+        #layers-tools.active {
+            background-image: url(img/layers-active.svg);
         }
     </style>
 </head>
@@ -97,27 +191,49 @@
         <div id="city">
             <div id="city-buildings"></div>
             <div id="grid-container">
-                <div class="grid" style="left: 50%; top: 50%;"></div>
+                <div id="grid" style="left: 50%; top: 50%;"></div>
             </div>
+        </div>
+        <div id="tools" class="menu">
+            <div id="move-cam-tools" class="tool-btn"></div>
+            <div id="edit-building-tools" class="tool-btn"></div>
+            <div id="layers-tools" class="tool-btn"></div>
+            <div id="grid-tools" class="tool-btn"></div>
+            <div id="close-tools" class="tool-btn"></div>
         </div>
     </div>
     <script>
-        const gridSize = 50;
+        const Layer = {
+            GROUND: 'ground',
+            ROAD: 'road',
+            BUILDINGS: 'buildings',
+        }
+        const gridSize = 100;
         const cityHolder = document.getElementById("city-holder");
         const cityContainer = document.getElementById("city");
         const cityBuildings = document.getElementById("city-buildings");
-        const gridContainer = document.getElementById("grid-container");
+        const tools = document.getElementById("tools");
+        const closeTools = document.getElementById("close-tools");
+        const editBuildingTools = document.getElementById("edit-building-tools");
+        const moveCamTools = document.getElementById("move-cam-tools");
+        const addBuildingTools = document.getElementById("add-building-tools");
+        const gridTools = document.getElementById("grid-tools");
+        const layersTools = document.getElementById("layers-tools");
+
 
         cityContainer.style.width = `${gridSize * 100}px`;
         cityContainer.style.height = `${gridSize * 100}px`;
-        gridContainer.style.width = `${gridSize * 100}px`;
-        gridContainer.style.height = `${gridSize * 100}px`;
 
         const tileWidth = 99;
         const tileHeight = 49.5;
         const maxScale = 1;
         const minScale = 0.2;
         const scaleStep = 0.1;
+        let showGrid = false;
+        let canCamChange = false;
+        let canAddBuilding = false;
+        let canBuildingChange = false;
+        const layers = [Layer.GROUND, Layer.ROAD, Layer.BUILDINGS];
 
         let isDragging = false;
         let isPanning = false;
@@ -128,12 +244,19 @@
 
         const cityRect = cityContainer.getBoundingClientRect();
 
-        const buildings = [
-            { id: 1, x: 0, y: 0, w: 4, h: 4, image: 'img/obj_cit_004_06.png' },
-            { id: 2, x: -5, y: -5, w: 2, h: 2, image: 'img/obj_cit_004_06.png' },
-            { id: 3, x: 5, y: 5, w: 2, h: 2, image: 'img/obj_cit_004_06.png' },
-            { id: 4, x: 8, y: -2, w: 10, h: 10, image: 'img/obj_cit_004_06.png' },
-        ];
+        let buildings = [];
+
+        function initCity() {
+            buildings = [
+                { id: 1, x: 0, y: 0, w: 4, h: 4, image: 'img/obj_cit_004_06.png' },
+                { id: 2, x: -5, y: -5, w: 2, h: 2, image: 'img/obj_cit_004_06.png' },
+                { id: 3, x: 5, y: 5, w: 2, h: 2, image: 'img/obj_cit_004_07.png' },
+                { id: 4, x: 8, y: -2, w: 10, h: 10, image: 'img/obj_cit_004_07.png' },
+            ];
+            renderBuildings();
+        }
+
+
 
         function getPointerPosition(e) {
             if (e.touches && e.touches.length > 0) {
@@ -205,6 +328,17 @@
             });
         }
 
+        function updateGrid() {
+            const gridContainer = document.getElementById("grid-container");
+            const gridElement = document.getElementById("grid");
+            gridContainer.style.width = `${gridSize * 100}px`;
+            gridContainer.style.height = `${gridSize * 100}px`;
+            gridContainer.style.display = showGrid ? 'block' : 'none';
+
+            gridElement.style.width = `${gridSize * 100}px`;
+            gridElement.style.height = `${gridSize * 100}px`;
+        }
+
         function updateTransform() {
             cityContainer.style.transform = `translate(${-50 + worldX * 100}%, ${-50 + worldY * 100}%) scale(${scale})`;
         }
@@ -255,6 +389,9 @@
             };
 
             const onDown = (e) => {
+                if (!canBuildingChange) {
+                    return;
+                }
                 e.preventDefault();
                 isDragging = true;
                 const pos = getPointerPosition(e);
@@ -272,6 +409,9 @@
 
         function setupPan() {
             cityHolder.addEventListener("wheel", (e) => {
+                if (!canCamChange) {
+                    return;
+                }
                 e.preventDefault();
                 const delta = e.deltaY > 0 ? -1 : 1;
                 scale = Math.min(maxScale, Math.max(minScale, scale + delta * scaleStep));
@@ -296,7 +436,7 @@
             };
 
             const onPanStart = (e) => {
-                if (isDragging) return;
+                if (isDragging || !canCamChange) return;
                 const pos = getPointerPosition(e);
                 isPanning = true;
                 startPan = {
@@ -315,9 +455,53 @@
             cityHolder.addEventListener("touchstart", onPanStart, { passive: false });
         }
 
+        tools.addEventListener("click", (e) => {
+            if (!tools.classList.contains('expanded')) {
+                tools.classList.add('expanded');
+            }
+        });
+        closeTools.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (tools.classList.contains('expanded')) {
+                tools.classList.remove('expanded');
+            }
+        });
+        editBuildingTools.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const enabled = editBuildingTools.classList.contains('active')
+            editBuildingTools.classList.toggle('active');
+            canBuildingChange = !enabled;
+        });
+        moveCamTools.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const enabled = moveCamTools.classList.contains('active')
+            moveCamTools.classList.toggle('active');
+            canCamChange = !enabled;
+        });
+        addBuildingTools.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const enabled = addBuildingTools.classList.contains('active')
+            addBuildingTools.classList.toggle('active');
+            canAddBuilding = !enabled;
+        });
+        gridTools.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const enabled = gridTools.classList.contains('active')
+            gridTools.classList.toggle('active');
+            showGrid = !enabled;
+            updateGrid();
+        });
+        layersTools.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const enabled = layersTools.classList.contains('active')
+            layersTools.classList.toggle('active');
+        });
+
         renderBuildings();
+        updateGrid();
         updateTransform();
         setupPan();
+        initCity();
     </script>
 
 

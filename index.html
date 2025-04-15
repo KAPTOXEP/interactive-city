@@ -10,6 +10,7 @@
         body {
             position: relative;
             margin: 0;
+            padding: 0;
             width: 100%;
             height: 100%;
             overflow: hidden;
@@ -17,7 +18,7 @@
 
         html {
             --city-background-color: 'transparent';
-            --building-base-background-color: 'transparent';
+            --item-base-background-color: 'transparent';
         }
 
         #city-holder {
@@ -34,9 +35,18 @@
             transform: translate(-50%, -50%);
         }
 
-        #layer-buildings,
+        #selection-area {
+            position: absolute;
+            pointer-events: none;
+            background: rgba(0, 255, 0, 0.3);
+            transform-origin: top left;
+            z-index: 1000000000;
+            display: none;
+        }
+
         #layer-ground,
-        #layer-road {
+        #layer-road,
+        #layer-buildings {
             position: absolute;
             width: 100%;
             height: 100%;
@@ -44,14 +54,35 @@
             left: 0;
         }
 
+        #layer-ground {
+            z-index: 0;
+        }
+
+        #layer-road {
+            z-index: 1;
+        }
+
+        #layer-buildings {
+            z-index: 3;
+        }
+
         #grid-container {
             position: absolute;
             transform-origin: 0 0;
-            transform: rotateX(60deg) rotateZ(-45deg) scale(0.7) translate(-50%, -50%);
-            perspective: 1000px;
+            transform: rotateX(60deg) rotateZ(-45deg) scale(0.7071) translate(-50%, -50%);
             top: 50%;
             left: 50%;
             display: none;
+            z-index: 2;
+        }
+
+        #grid {
+            position: absolute;
+            background-image:
+                linear-gradient(rgba(0, 0, 0, 0.3) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 0, 0, 0.3) 1px, transparent 1px);
+            background-size: 100px 100px;
+            transform: translate(-50%, -50%);
         }
 
         .menu {
@@ -99,7 +130,7 @@
             display: flex;
         }
 
-        .building {
+        .item {
             position: absolute;
             transform: translate(-50%, -100%);
             pointer-events: auto;
@@ -107,36 +138,27 @@
             pointer-events: none;
         }
 
-        .building.dragging {
+        .item.dragging {
             opacity: 0.8;
             cursor: grabbing;
         }
 
-        .building-base {
+        .item-base {
             position: absolute;
-            transform: rotateX(60deg) rotateZ(-45deg) scale(0.7) translate(-50%, 50%);
-            perspective: 1000px;
+            transform: rotateX(60deg) rotateZ(-45deg) scale(0.7071) translate(-50%, 50%);
             pointer-events: all;
             left: 0;
             top: 0;
-            background-color: var(--building-base-background-color);
+            background-color: var(--item-base-background-color);
         }
 
-        .building-image {
+        .item-image {
             position: absolute;
             width: 100%;
             height: 100%;
-            background-size: cover;
+            background-size: contain;
             background-repeat: no-repeat;
-        }
-
-        #grid {
-            position: absolute;
-            background-image:
-                linear-gradient(rgba(0, 0, 0, 0.3) 2px, transparent 2px),
-                linear-gradient(90deg, rgba(0, 0, 0, 0.3) 2px, transparent 2px);
-            background-size: 100px 100px;
-            transform: translate(-50%, -50%);
+            background-position: 50% 100%;
         }
 
         #close-tools {
@@ -220,7 +242,9 @@
             <div id="grid-container">
                 <div id="grid" style="left: 50%; top: 50%;"></div>
             </div>
+            <div id="selection-area"></div>
         </div>
+
         <div id="tools" class="menu">
             <div id="move-cam-tools" class="tool-btn"></div>
             <div id="edit-building-tools" class="tool-btn"></div>
@@ -239,7 +263,12 @@
             ROAD: 'road',
             BUILDINGS: 'buildings',
         }
-        const gridSize = 100;
+        const ItemType = {
+            ROAD: 'road',
+            BUILDINGS: 'buildings',
+            GROUND: 'ground',
+        }
+        const gridSize = 50;
         const cityHolder = document.getElementById("city-holder");
         const cityContainer = document.getElementById("city");
         const layerGround = document.getElementById("layer-ground");
@@ -252,21 +281,22 @@
         const gridTools = document.getElementById("grid-tools");
         const layersTools = document.getElementById("layers-tools");
         const contextMenu = document.getElementById("context-menu");
+        const selectionArea = document.getElementById('selection-area');
 
         cityContainer.style.width = `${gridSize * 100}px`;
         cityContainer.style.height = `${gridSize * 100}px`;
 
-        const tileWidth = 99;
-        const tileHeight = 49.5;
+        const tileWidth = 100;
+        const tileHeight = 50;
         const maxScale = 1;
         const minScale = 0.2;
         const scaleStep = 0.1;
         const longPressDuration = 500;
-        const maxMoveDistance = 10; // Максимальное расстояние перемещения для долгого тапа (в пикселях)
-        let showGrid = false;
-        let canCamChange = false;
-        let canAddBuilding = false;
-        let canBuildingChange = false;
+        const maxMoveDistance = 10;
+        let showGrid = true;
+        let canCamChange = true;
+        let canBuildingChange = true;
+        let selectionStart = null;
         const layers = [Layer.GROUND, Layer.ROAD, Layer.BUILDINGS];
 
         let activeId = false;
@@ -283,15 +313,45 @@
 
         const cityRect = cityContainer.getBoundingClientRect();
 
+        const roads = {
+            road_0_0: { image: 'img/road/road_0_0.png' },
+            road_1_0: { image: 'img/road/road_1_0.png' },
+        }
+
+        const grounds = {
+            grass_0_0: { image: 'img/ground/grass_0_0.png' },
+            grass_1_0: { image: 'img/ground/grass_1_0.png' },
+        }
+
+
         let items = [];
         let storage = {
             items: [
-                { id: 1, item_id: 'obj_cit_004', level: 7, x: 0, y: 0, w: 4, h: 4, layer: Layer.BUILDINGS },
-                { id: 2, item_id: 'obj_cit_004', level: 15, x: -5, y: -5, w: 2, h: 2, layer: Layer.BUILDINGS },
-                { id: 3, item_id: 'obj_cit_004', level: 20, x: 5, y: 5, w: 2, h: 2, layer: Layer.BUILDINGS },
-                { id: 4, item_id: 'obj_cit_004', level: 20, x: 8, y: -2, w: 10, h: 10, layer: Layer.BUILDINGS },
+                { id: 1, item_id: 'grass_1_0', level: 0, x: 0, y: 0, w: 3, h: 3, layer: Layer.GROUND, type: ItemType.GROUND },
+                { id: 2, item_id: 'grass_1_0', level: 0, x: 0, y: 3, w: 3, h: 3, layer: Layer.GROUND, type: ItemType.GROUND },
+                { id: 3, item_id: 'grass_1_0', level: 0, x: -3, y: 0, w: 3, h: 3, layer: Layer.GROUND, type: ItemType.GROUND },
+                { id: 4, item_id: 'grass_1_0', level: 0, x: -3, y: 3, w: 3, h: 3, layer: Layer.GROUND, type: ItemType.GROUND },
+                { id: 5, item_id: 'grass_1_0', level: 0, x: 3, y: 0, w: 3, h: 3, layer: Layer.GROUND, type: ItemType.GROUND },
+                { id: 6, item_id: 'grass_1_0', level: 0, x: 3, y: 3, w: 3, h: 3, layer: Layer.GROUND, type: ItemType.GROUND },
+                { id: 7, item_id: 'grass_1_0', level: 0, x: 6, y: 0, w: 3, h: 3, layer: Layer.GROUND, type: ItemType.GROUND },
+                { id: 8, item_id: 'grass_1_0', level: 0, x: 6, y: 3, w: 3, h: 3, layer: Layer.GROUND, type: ItemType.GROUND },
+
+
+                { id: 11, item_id: 'road_0_0', level: 0, x: 1, y: 0, w: 2, h: 2, layer: Layer.ROAD, type: ItemType.ROAD },
+                { id: 12, item_id: 'road_1_0', level: 0, x: 1, y: 2, w: 2, h: 2, layer: Layer.ROAD, type: ItemType.ROAD },
+                { id: 13, item_id: 'road_0_0', level: 0, x: 1, y: 3, w: 2, h: 2, layer: Layer.ROAD, type: ItemType.ROAD },
+                { id: 14, item_id: 'road_0_0', level: 0, x: 1, y: 4, w: 2, h: 2, layer: Layer.ROAD, type: ItemType.ROAD },
+
+                { id: 101, item_id: 'road_0_0', mirrored: true, level: 0, x: 3, y: -2, w: 2, h: 2, layer: Layer.ROAD, type: ItemType.ROAD },
+                { id: 102, item_id: 'road_0_0', mirrored: true, level: 0, x: 5, y: -2, w: 2, h: 2, layer: Layer.ROAD, type: ItemType.ROAD },
+
+
+                { id: 1000, item_id: 'obj_cit_004', level: 6, x: 0, y: 0, w: 1, h: 1, layer: Layer.BUILDINGS, type: ItemType.BUILDING },
+                { id: 1001, item_id: 'obj_cit_004', level: 6, x: -5, y: -5, w: 2, h: 2, layer: Layer.BUILDINGS, type: ItemType.BUILDING },
+                { id: 1002, item_id: 'obj_cit_004', level: 7, x: 5, y: 5, w: 2, h: 2, layer: Layer.BUILDINGS, type: ItemType.BUILDING },
+                { id: 1003, item_id: 'obj_cit_004', level: 7, x: 8, y: -2, w: 5, h: 5, layer: Layer.BUILDINGS, type: ItemType.BUILDING },
             ],
-            world: { worldX: 0, worldY: 0, worldScale: 0.5, backgroundColor: '#8f8e3c' }
+            world: { worldX: 0, worldY: 0, worldScale: 0.5, backgroundColor: '#7d9029' }
         };
         let gameObjects = {};
 
@@ -305,9 +365,16 @@
             }
             if (storage.items && Array.isArray(storage.items)) {
                 items = storage.items.map(item => {
-                    const { id, item_id, level, x, y, w, h, layer } = item;
-                    const image = 'img/obj_cit_007_07.png';
-                    return { id, item_id, level, image, x, y, w, h, layer }
+                    const { id, item_id, level, x, y, w, h, layer, mirrored, filter } = item;
+                    let image = ''
+                    if (item.type === ItemType.BUILDING) {
+                        image = `img/${item_id}_0${level}.png`;
+                    } else if (item.type === ItemType.ROAD) {
+                        image = roads[item_id].image;
+                    } else if (item.type === ItemType.GROUND) {
+                        image = grounds[item_id].image;
+                    }
+                    return { id, item_id, level, image, x, y, w, h, layer, mirrored, filter }
                 }).filter(Boolean);
             }
             updateBackground();
@@ -315,6 +382,7 @@
             updateGrid();
             updateTransform();
             setupPan();
+            //setupSelection();
         }
 
         function updateBackground() {
@@ -381,7 +449,7 @@
                 const { top: centerTop } = gridToScreen(b.x + (b.w - 1) / 2, b.y + (b.h - 1) / 2);
 
                 const buildingElement = document.createElement("div");
-                buildingElement.className = "building";
+                buildingElement.className = "item";
 
                 buildingElement.style.width = `${tileWidth * b.w}px`;
                 buildingElement.style.height = `${tileWidth * b.h}px`;
@@ -390,11 +458,17 @@
                 buildingElement.dataset.id = b.id;
 
                 const imageElement = document.createElement("div");
-                imageElement.className = "building-image";
+                imageElement.className = "item-image";
+                if (b.mirrored) {
+                    imageElement.style.transform = `scaleX(${-100}%)`;
+                }
+                if (b.filter) {
+                    imageElement.style.filter = b.filter
+                }
                 imageElement.style.backgroundImage = `url(${b.image})`;
 
                 const baseElement = document.createElement("div");
-                baseElement.className = "building-base";
+                baseElement.className = "item-base";
                 baseElement.style.width = `${tileWidth * b.w}px`;
                 baseElement.style.height = `${tileWidth * b.h}px`;
 
@@ -412,7 +486,7 @@
             gridContainer.style.width = `${gridSize * 100}px`;
             gridContainer.style.height = `${gridSize * 100}px`;
             gridContainer.style.display = showGrid ? 'block' : 'none';
-            document.documentElement.style.setProperty('--building-base-background-color', showGrid ? 'rgba(0, 0, 0, 0.2)' : 'transparent');
+            document.documentElement.style.setProperty('--item-base-background-color', showGrid ? 'rgba(0, 0, 0, 0.2)' : 'transparent');
 
             gridElement.style.width = `${gridSize * 100}px`;
             gridElement.style.height = `${gridSize * 100}px`;
@@ -608,6 +682,85 @@
             cityHolder.addEventListener("touchstart", onPanStart, { passive: false });
         }
 
+        function setupSelection() {
+            function getEventPosition(e) {
+                if (e.touches && e.touches.length > 0) {
+                    return getPointerPosition(e.touches[0]);
+                }
+                return getPointerPosition(e);
+            }
+
+            function startSelection(e) {
+                if (!canBuildingChange) return;
+                const rect = e.currentTarget.getBoundingClientRect()
+                const pos = getEventPosition(e);
+                selectionStart = screenToGrid((pos.x - rect.x) / scale, (pos.y - rect.y) / scale);
+                selectionArea.style.display = 'block';
+            }
+
+            function moveSelection(e) {
+                if (!canBuildingChange || !selectionStart) return;
+                e.stopPropagation();
+                e.preventDefault
+                const pos = getEventPosition(e);
+                const rect = e.currentTarget.getBoundingClientRect()
+                const current = screenToGrid((pos.x - rect.x) / scale, (pos.y - rect.y) / scale);
+                const x = Math.min(selectionStart.x, current.x);
+                const y = Math.min(selectionStart.y, current.y);
+                const w = Math.abs(selectionStart.x - current.x) + 1;
+                const h = Math.abs(selectionStart.y - current.y) + 1;
+
+                if (isOutOfBounds(x, y, w, h)) {
+                    selectionArea.style.display = 'none';
+                    return;
+                }
+
+                const { left, top } = gridToScreen(x, y);
+                selectionArea.style.display = 'block';
+                selectionArea.style.width = `${tileWidth * w}px`;
+                selectionArea.style.height = `${tileWidth * h}px`;
+                console.log(left, top);
+                selectionArea.style.transform = `translate(${left}px, ${top}px) rotateX(60deg) rotateZ(-45deg) scale(0.7071) translate(-50%, -50%)`;
+            }
+            function endSelection(e) {
+                if (!canBuildingChange || !selectionStart) return;
+                const pos = getEventPosition(e);
+                const rect = cityContainer.getBoundingClientRect()
+                const current = screenToGrid((pos.x - rect.x) / scale, (pos.y - rect.y) / scale);
+                const end = screenToGrid((pos.x - rect.x) / scale, (pos.y - rect.y) / scale);
+                const x = Math.min(selectionStart.x, end.x);
+                const y = Math.min(selectionStart.y, end.y);
+                const w = Math.abs(selectionStart.x - end.x) + 1;
+                const h = Math.abs(selectionStart.y - end.y) + 1;
+
+                selectionArea.style.display = 'none';
+                selectionStart = null;
+
+                if (isOutOfBounds(x, y, w, h)) return;
+                if (isOccupied(x, y, w, h, Layer.BUILDINGS)) return;
+
+                const newId = items.reduce((max, item) => Math.max(max, item.id), 0) + 1;
+                const newItem = {
+                    id: newId,
+                    item_id: 'obj_cit_004',
+                    level: 1,
+                    image: 'img/obj_cit_007_07.png',
+                    x, y, w, h,
+                    layer: Layer.BUILDINGS
+                };
+                items.push(newItem);
+                renderItems();
+            }
+            cityContainer.addEventListener('mousedown', startSelection);
+            cityContainer.addEventListener('mousemove', moveSelection);
+            window.addEventListener('mouseup', endSelection);
+
+            // Touch events
+            cityContainer.addEventListener('touchstart', startSelection);
+            cityContainer.addEventListener('touchmove', moveSelection);
+            window.addEventListener('touchend', endSelection);
+        }
+
         tools.addEventListener("click", (e) => {
             if (!tools.classList.contains('expanded')) {
                 tools.classList.add('expanded');
@@ -646,11 +799,11 @@
 
         contextMenu.querySelectorAll('.context-menu-item').forEach(item => {
             item.addEventListener('click', (e) => {
-                const buildingId = parseInt(contextMenu.dataset.buildingId);
-                const building = items.find(b => b.id === buildingId);
+                const itemId = parseInt(contextMenu.dataset.itemId);
+                const item = items.find(b => b.id === itemId);
 
-                if (e.target.textContent === 'Удалить' && building) {
-                    items = items.filter(b => b.id !== buildingId);
+                if (e.target.textContent === 'Удалить' && item) {
+                    items = items.filter(b => b.id !== itemId);
                     renderItems();
                 }
                 contextMenu.style.display = 'none';

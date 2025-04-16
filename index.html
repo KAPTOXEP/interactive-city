@@ -38,8 +38,7 @@
         #selection-area {
             position: absolute;
             pointer-events: none;
-            background: rgba(0, 255, 0, 0.3);
-            transform-origin: top left;
+            transform-origin: 0 0;
             z-index: 1000000000;
             display: none;
         }
@@ -294,10 +293,17 @@
         const longPressDuration = 500;
         const maxMoveDistance = 10;
         let showGrid = true;
-        let canCamChange = true;
+        let canCamChange = false;
         let canBuildingChange = true;
         let selectionStart = null;
+        let selectionEnd = null;
         const layers = [Layer.GROUND, Layer.ROAD, Layer.BUILDINGS];
+        const layersHitBoxes = {
+            [Layer.GROUND]: [Layer.GROUND],
+            [Layer.ROAD]: [Layer.ROAD],
+            [Layer.BUILDINGS]: [Layer.ROAD, Layer.BUILDINGS]
+        }
+
 
         let activeId = false;
         let isDragging = false;
@@ -310,6 +316,7 @@
         let longPressTimer = null;
         let touchStartPos = null;
         let isLongPress = false;
+        let activeLayer = Layer.BUILDINGS;
 
         const cityRect = cityContainer.getBoundingClientRect();
 
@@ -382,7 +389,7 @@
             updateGrid();
             updateTransform();
             setupPan();
-            //setupSelection();
+            setupSelection();
         }
 
         function updateBackground() {
@@ -403,21 +410,24 @@
             };
         }
 
-        function screenToGrid(left, top) {
+        function screenToGrid(left, top, round = true) {
             const centerX = left - cityRect.width / 2;
             const centerY = top - cityRect.height / 2;
             const x = (centerY / (tileHeight / 2) + centerX / (tileWidth / 2)) / 2;
             const y = (centerY / (tileHeight / 2) - centerX / (tileWidth / 2)) / 2;
             return {
-                x: Math.round(x),
-                y: Math.round(y)
+                x: round ? Math.round(x) : x,
+                y: round ? Math.round(y) : y,
             };
         }
 
-        function isOccupied(x, y, w, h, layer, excludeId = null) {
+        function isOccupied(x, y, w, h, layers = [], excludeId = null) {
+            if (layers.length === 0) {
+                return false;
+            }
             return items.some(b => {
                 if (b.id === excludeId) return false;
-                return !(x + w <= b.x || x >= b.x + b.w || y + h <= b.y || y >= b.y + b.h) && b.layer === layer;
+                return !(x + w <= b.x || x >= b.x + b.w || y + h <= b.y || y >= b.y + b.h) && layers.some(layer => b.layer === layer);
             });
         }
 
@@ -554,7 +564,7 @@
                 const finalY = offset.y + (pos.y - start.y) / scale;
 
                 const { x, y } = screenToGrid(finalX, finalY);
-                const collision = isOccupied(x, y, item.w, item.h, item.layer, item.id) || isOutOfBounds(x, y, item.w, item.h);
+                const collision = isOccupied(x, y, item.w, item.h, [item.layer], item.id) || isOutOfBounds(x, y, item.w, item.h);
                 if (!collision) {
                     item.x = x;
                     item.y = y;
@@ -682,6 +692,60 @@
             cityHolder.addEventListener("touchstart", onPanStart, { passive: false });
         }
 
+        function getSelectionArea(start, end, squere = false) {
+            if (!start || !end) {
+                return null;
+            }
+            let x = start.x;
+            let y = start.y;
+            let w = end.x - x;
+            let h = end.y - y;
+
+            const signX = w ? w / Math.abs(w) : 0;
+            const signY = h ? h / Math.abs(h) : 0;
+
+            let l = Math.floor(Math.min(x, x + w));
+            let r = Math.ceil(Math.max(x, x + w));
+            let t = Math.floor(Math.min(y, y + h));
+            let b = Math.ceil(Math.max(y, y + h));
+
+            x = l;
+            y = t;
+            w = r - l;
+            h = b - t;
+
+            if (squere) {
+                const side = Math.max(w, h);
+                w = side;
+                h = side;
+
+                if (signX < 0) x = r - side;
+                if (signY < 0) y = b - side;
+            }
+
+            return { x, y, w, h };
+        }
+
+        function updateSelectionStyles() {
+            if (!selectionStart || !selectionEnd) {
+                selectionArea.style.display = 'none';
+                return;
+            }
+            let { x, y, w, h } = getSelectionArea(selectionStart, selectionEnd, true);
+            const targetX = x + 1;
+            const targetY = y + 1;
+            console.log(targetX, targetY, w, h, layersHitBoxes[activeLayer])
+            let collision = isOutOfBounds(targetX, targetY, w, h) || isOccupied(targetX, targetY, w, h, layersHitBoxes[activeLayer]);
+            const { left, top } = gridToScreen(x, y);
+
+            selectionArea.style.backgroundColor = collision ? 'rgba(255, 0, 0, 0.3)' : 'rgba(0, 255, 0, 0.3)';
+            selectionArea.style.display = 'block';
+            selectionArea.style.width = `${tileWidth}px`;
+            selectionArea.style.height = `${tileWidth}px`;
+            selectionArea.style.transform = `translate(${left}px, ${top}px) rotateX(60deg) rotateZ(-45deg) scale(0.7071) scale(${-h}, ${w})`;
+
+        }
+
         function setupSelection() {
             function getEventPosition(e) {
                 if (e.touches && e.touches.length > 0) {
@@ -694,8 +758,10 @@
                 if (!canBuildingChange) return;
                 const rect = e.currentTarget.getBoundingClientRect()
                 const pos = getEventPosition(e);
-                selectionStart = screenToGrid((pos.x - rect.x) / scale, (pos.y - rect.y) / scale);
-                selectionArea.style.display = 'block';
+                selectionStart = screenToGrid((pos.x - rect.x) / scale, (pos.y - rect.y) / scale, false);
+                selectionEnd = selectionStart;
+
+                updateSelectionStyles();
             }
 
             function moveSelection(e) {
@@ -704,40 +770,24 @@
                 e.preventDefault
                 const pos = getEventPosition(e);
                 const rect = e.currentTarget.getBoundingClientRect()
-                const current = screenToGrid((pos.x - rect.x) / scale, (pos.y - rect.y) / scale);
-                const x = Math.min(selectionStart.x, current.x);
-                const y = Math.min(selectionStart.y, current.y);
-                const w = Math.abs(selectionStart.x - current.x) + 1;
-                const h = Math.abs(selectionStart.y - current.y) + 1;
-
-                if (isOutOfBounds(x, y, w, h)) {
-                    selectionArea.style.display = 'none';
-                    return;
-                }
-
-                const { left, top } = gridToScreen(x, y);
-                selectionArea.style.display = 'block';
-                selectionArea.style.width = `${tileWidth * w}px`;
-                selectionArea.style.height = `${tileWidth * h}px`;
-                console.log(left, top);
-                selectionArea.style.transform = `translate(${left}px, ${top}px) rotateX(60deg) rotateZ(-45deg) scale(0.7071) translate(-50%, -50%)`;
+                selectionEnd = screenToGrid((pos.x - rect.x) / scale, (pos.y - rect.y) / scale, false);
+                updateSelectionStyles();
             }
-            function endSelection(e) {
-                if (!canBuildingChange || !selectionStart) return;
-                const pos = getEventPosition(e);
-                const rect = cityContainer.getBoundingClientRect()
-                const current = screenToGrid((pos.x - rect.x) / scale, (pos.y - rect.y) / scale);
-                const end = screenToGrid((pos.x - rect.x) / scale, (pos.y - rect.y) / scale);
-                const x = Math.min(selectionStart.x, end.x);
-                const y = Math.min(selectionStart.y, end.y);
-                const w = Math.abs(selectionStart.x - end.x) + 1;
-                const h = Math.abs(selectionStart.y - end.y) + 1;
 
-                selectionArea.style.display = 'none';
+            function endSelection(e) {
+                if (!canBuildingChange || !selectionStart || !selectionEnd) return;
+                let { x, y, w, h } = getSelectionArea(selectionStart, selectionEnd, true);
+
+                x += 1;
+                y += 1;
+                updateSelectionStyles();
+
                 selectionStart = null;
+                selectionEnd = null;
+                selectionArea.style.display = 'none';
 
                 if (isOutOfBounds(x, y, w, h)) return;
-                if (isOccupied(x, y, w, h, Layer.BUILDINGS)) return;
+                if (isOccupied(x, y, w, h, [Layer.BUILDINGS])) return;
 
                 const newId = items.reduce((max, item) => Math.max(max, item.id), 0) + 1;
                 const newItem = {
@@ -746,7 +796,7 @@
                     level: 1,
                     image: 'img/obj_cit_007_07.png',
                     x, y, w, h,
-                    layer: Layer.BUILDINGS
+                    layer: activeLayer
                 };
                 items.push(newItem);
                 renderItems();
@@ -755,7 +805,6 @@
             cityContainer.addEventListener('mousemove', moveSelection);
             window.addEventListener('mouseup', endSelection);
 
-            // Touch events
             cityContainer.addEventListener('touchstart', startSelection);
             cityContainer.addEventListener('touchmove', moveSelection);
             window.addEventListener('touchend', endSelection);
